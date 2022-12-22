@@ -3,6 +3,7 @@ module Main where
 import Control.Monad
 import System.IO
 import Control.Concurrent (threadDelay)
+import Options.Applicative
 
 
 delay :: Int
