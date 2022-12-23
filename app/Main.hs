@@ -19,6 +19,8 @@ import System.Exit
 import Data.Kind
 import Data.List.Split
 import Data.Int
+import Data.Vector qualified as Vector
+import Data.Vector (Vector, (!), (!?))
 
 newtype Pos = Pos Int
               deriving newtype (Eq,Ord,Num,Enum,Integral,Real,Read,Show)
@@ -28,8 +30,8 @@ data Chunk =   Tag [Char]
              deriving stock (Eq,Show)
 
 
-data PState = PState { _psMax  :: Pos
-                     , _psTags :: Map (Maybe Char) Pos
+data PState = PState { _psMax  :: !Pos
+                     , _psTags :: !(Map (Maybe Char) Pos)
                      }
 
 makeLenses ''PState
@@ -47,11 +49,11 @@ data instance WithPos LR =
   PosLR (Pos,Pos) Chunk
   deriving stock (Eq,Show)
 
-data Opts = Opts { _optWinLen  :: Pos
-                 , _optDelay   :: Int
-                 , _optLf      :: Bool
-                 , _optTextMax :: Int64
-                 , _optTimes   :: Maybe Int
+data Opts = Opts { _optWinLen  :: !Pos
+                 , _optDelay   :: !Int
+                 , _optLf      :: !Bool
+                 , _optTextMax :: !Int64
+                 , _optTimes   :: !(Maybe Int)
                  }
 
 makeLenses ''Opts
@@ -128,6 +130,8 @@ chunksMapL chunks = Map.fromList [ (l, e) | e@(PosLR (l,_) _) <- chunks ]
 findSymbolL :: Pos -> Map Pos (WithPos LR) -> Maybe (WithPos LR)
 findSymbolL p m = snd <$> Map.lookupGE p m
 
+findSymbolLV :: Pos -> Vector (WithPos LR) -> WithPos LR
+findSymbolLV p v = v ! fromIntegral p
 
 main :: IO ()
 main = join . customExecParser (prefs showHelpOnError) $
@@ -193,19 +197,23 @@ run o = do
   txt <- Text.take textMax <$> TIO.hGetContents stdin
   let chunks = readChunks (Text.unpack txt)
   let chunksL = chunksMapL chunks
+  let chunksV = Vector.fromList chunks
 
   when (null chunks) exitSuccess
 
   let total = Map.size chunksL
-  let cmin = fst $ Map.findMin chunksL
-  let cmax = fst $ Map.findMax chunksL
-  let batches = genIndexes total winLen (cmin,cmax)
+  let cmin = 0
+  let cmax = fromIntegral $ max 0 (pred $ Vector.length chunksV)
+
+  -- print (cmin, cmax)
+  -- error "oopsie"
 
   let cycles = maybe forever replicateM_ (view optTimes o)
 
   cycles $ do
+    let batches = genIndexes total winLen (cmin,cmax)
     forM_ batches $ \batch -> do
-      let sy = catMaybes $ map (`findSymbolL` chunksL) batch
+      let sy = map (`findSymbolLV` chunksV) batch
       mapM_ (putChunk o) [ x | PosLR _ x <- sy ]
       putEnd o
       threadDelay delay
