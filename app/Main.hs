@@ -51,6 +51,7 @@ data Opts = Opts { _optWinLen  :: Pos
                  , _optDelay   :: Int
                  , _optLf      :: Bool
                  , _optTextMax :: Int64
+                 , _optTimes   :: Maybe Int
                  }
 
 makeLenses ''Opts
@@ -166,7 +167,13 @@ main = join . customExecParser (prefs showHelpOnError) $
                           <> showDefault
                          )
 
-     pure $ run ( Opts win delay lf mtext )
+     times <- optional $ option auto (  long "times"
+                                     <> short 'k'
+                                     <> metavar "NUMBER"
+                                     <> help "number of repetitions"
+                                     )
+
+     pure $ run ( Opts win delay lf mtext times )
 
 
 genIndexes :: Int -> Pos -> (Pos,Pos) -> [[Pos]]
@@ -194,11 +201,17 @@ run o = do
   let cmax = fst $ Map.findMax chunksL
   let batches = genIndexes total winLen (cmin,cmax)
 
-  forM_ batches $ \batch -> do
-    let sy = catMaybes $ map (`findSymbolL` chunksL) batch
-    mapM_ (putChunk o) [ x | PosLR _ x <- sy ]
-    putEnd o
+  let cycles = maybe forever replicateM_ (view optTimes o)
+
+  cycles $ do
+    forM_ batches $ \batch -> do
+      let sy = catMaybes $ map (`findSymbolL` chunksL) batch
+      mapM_ (putChunk o) [ x | PosLR _ x <- sy ]
+      putEnd o
+      threadDelay delay
     threadDelay delay
+
+  replicateM_  (fromIntegral winLen) (putChar ' ')
 
   where
     delay = view optDelay o
