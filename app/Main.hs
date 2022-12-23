@@ -219,7 +219,7 @@ run o = do
       threadDelay delay
     threadDelay delay
 
-  -- replicateM_  (fromIntegral winLen) (putChar ' ')
+  replicateM_  (fromIntegral winLen) (putChar ' ')
 
   where
     delay = view optDelay o
