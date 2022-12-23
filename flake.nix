@@ -1,5 +1,5 @@
 {
-description = "offgrid";
+description = "polyscroll";
 
 inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-22.11";

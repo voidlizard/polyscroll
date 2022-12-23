@@ -137,8 +137,8 @@ main :: IO ()
 main = join . customExecParser (prefs showHelpOnError) $
   info (helper <*> parser)
   (  fullDesc
-  <> header "General program title/description"
-  <> progDesc "What does this thing do?"
+  <> header "Text scrolling tool for panels"
+  <> progDesc "Scrolls text. Respects lemonbar tags for formatting"
   )
   where
     parser :: Parser (IO ())
