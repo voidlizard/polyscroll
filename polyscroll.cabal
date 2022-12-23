@@ -114,8 +114,12 @@ executable polyscroll
     build-depends:    base ^>=4.15.1.0
                     , containers
                     , text
+                    , mtl
                     , safe
                     , optparse-applicative
+                    , microlens-platform
+                    , microlens-th
+                    , uniplate
 
     -- Directories containing source files.
     hs-source-dirs:   app
