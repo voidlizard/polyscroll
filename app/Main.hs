@@ -197,6 +197,7 @@ run o = do
   txt <- Text.take textMax <$> TIO.hGetContents stdin
   let chunks = readChunks (Text.unpack txt)
   let chunksL = chunksMapL chunks
+  let chunksTL = chunksMapL [ x | x@(PosLR _ (Tag{}))  <- chunks ]
   let chunksV = Vector.fromList chunks
 
   when (null chunks) exitSuccess
@@ -213,11 +214,20 @@ run o = do
 
   cycles $ do
     forM_ batches $ \batch -> do
+      let start = headDef 0 batch
+
       let sy = map (`findSymbolLV` chunksV) batch
+
+      let (lt,_,_) = Map.splitLookup start chunksTL
+      let otags = [ x | e@(PosLR (_,r) x) <- Map.elems lt, r >= start  ]
+
+      -- forM_ otags $ \e -> do
+      --   print (start, e)
+
+      mapM_ (putChunk o) otags
       mapM_ (putChunk o) [ x | PosLR _ x <- sy ]
       putEnd o
       threadDelay delay
-    threadDelay delay
 
   replicateM_  (fromIntegral winLen) (putChar ' ')
 
