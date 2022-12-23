@@ -201,17 +201,17 @@ run o = do
 
   when (null chunks) exitSuccess
 
+  -- mapM_ print (Vector.toList chunksV)
+  -- error "oops"
+
   let total = Map.size chunksL
   let cmin = 0
   let cmax = fromIntegral $ max 0 (pred $ Vector.length chunksV)
-
-  -- print (cmin, cmax)
-  -- error "oopsie"
+  let batches = genIndexes total winLen (cmin,cmax)
 
   let cycles = maybe forever replicateM_ (view optTimes o)
 
   cycles $ do
-    let batches = genIndexes total winLen (cmin,cmax)
     forM_ batches $ \batch -> do
       let sy = map (`findSymbolLV` chunksV) batch
       mapM_ (putChunk o) [ x | PosLR _ x <- sy ]
@@ -219,7 +219,7 @@ run o = do
       threadDelay delay
     threadDelay delay
 
-  replicateM_  (fromIntegral winLen) (putChar ' ')
+  -- replicateM_  (fromIntegral winLen) (putChar ' ')
 
   where
     delay = view optDelay o
