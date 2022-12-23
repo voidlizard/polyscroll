@@ -116,6 +116,7 @@ executable polyscroll
                     , text
                     , mtl
                     , safe
+                    , split
                     , optparse-applicative
                     , microlens-platform
                     , microlens-th

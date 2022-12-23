@@ -16,133 +16,193 @@ import Lens.Micro.Platform
 import Safe
 import Data.Maybe
 import System.Exit
+import Data.Kind
+import Data.List.Split
+import Data.Int
 
 newtype Pos = Pos Int
-              deriving newtype (Eq,Ord,Num,Enum,Show)
+              deriving newtype (Eq,Ord,Num,Enum,Integral,Real,Read,Show)
 
-data Chunk =   Tag (Maybe Pos) [Char]
-             | Symbol (Maybe Pos) Char
+data Chunk =   Tag [Char]
+             | Symbol Char
              deriving stock (Eq,Show)
 
 
-data PState = PState { _psPos  :: Maybe Pos
-                     , _psMax  :: Maybe Pos
+data PState = PState { _psMax  :: Pos
                      , _psTags :: Map (Maybe Char) Pos
                      }
 
-
 makeLenses ''PState
 
+data L
+data LR
+
+data family WithPos a :: Type
+
+data instance WithPos L  =
+  PosL Pos Chunk
+  deriving stock (Eq,Show)
+
+data instance WithPos LR =
+  PosLR (Pos,Pos) Chunk
+  deriving stock (Eq,Show)
+
+data Opts = Opts { _optWinLen  :: Pos
+                 , _optDelay   :: Int
+                 , _optLf      :: Bool
+                 , _optTextMax :: Int64
+                 }
+
+makeLenses ''Opts
+
 instance Monoid PState where
-  mempty = PState Nothing Nothing mempty
+  mempty = PState 0 mempty
 
 instance Semigroup PState where
-  (<>) a b = PState (max (view psPos a) (view psPos b))
-                    (max (view psPos a) (view psPos b))
+  (<>) a b = PState (max (view psMax a) (view psMax b))
                     (view psTags a <> view psTags b)
 
 
-delay :: Int
-delay = 0
-
-textMax = 4096
-
 window = 4
 
-readChunks :: [Char] -> [Chunk]
-readChunks s =
-  case s of
-    [] -> []
-    ('\r' : rest) -> Symbol Nothing ' ' : readChunks rest
-    ('\n' : rest) -> Symbol Nothing ' ' : readChunks rest
-    ('%' : '{' : rest) -> readTag rest
-    (c    : rest) -> Symbol Nothing c   : readChunks rest
-
-
+readChunks :: [Char] -> [WithPos LR]
+readChunks = withRight . withLeft . readChunks'
   where
+    readChunks' s = case s of
+      [] -> []
+      ('\r' : rest) -> Symbol ' ' : readChunks' rest
+      ('\n' : rest) -> Symbol ' ' : readChunks' rest
+      ('%' : '{' : rest) -> readTag rest
+      (c    : rest) -> Symbol c   : readChunks' rest
+
     readTag :: [Char] -> [Chunk]
     readTag txt =
       let (tag,rest) = L.span (/='}') txt
-      in Tag Nothing tag : readChunks (drop 1 rest)
+      in Tag tag : readChunks' (drop 1 rest)
 
+    withLeft :: [Chunk] -> [WithPos L]
+    withLeft = zipWith PosL [0..]
 
-updatePositions :: [Chunk] -> [Chunk]
-updatePositions x = updateTags updateSymbols
-    where
-
-    updateTags :: [Chunk] -> [Chunk]
-    updateTags chunks = res
+    withRight :: [WithPos L] -> [WithPos LR]
+    withRight chunks = res
       where
         res = let (_,w) = evalRWS (go (reverse chunks)) () mempty in reverse w
 
-        go :: [Chunk] -> RWS () [Chunk] PState ()
-        go  = \case
+        go :: [WithPos L] -> RWS () [WithPos LR] PState ()
+        go = \case
           [] -> pure ()
-
-          (sy@(Symbol p _) : rest) -> do
-            modify (set psPos p)
+          ((PosL p sy@(Symbol{})) : rest) -> do
             pmax <- gets (view psMax)
             modify (set psMax (max p pmax))
-            tell [sy]
+            tell [PosLR (p,p) sy]
             go rest
 
-          ( Tag _ t : rest ) -> do
-            pmax <- gets (view psMax)
-            pcurr <- gets (view psPos)
+          ((PosL p tag@(Tag t)) : rest) -> do
             pmy   <- gets (Map.lookup (headMay t) . view psTags)
+            pmax <- gets (view psMax)
+            modify $ over psTags (Map.insert (headMay t) (pred p))
 
-            case pcurr of
-              Nothing -> pure ()
-              Just p  -> modify $ over psTags (Map.insert (headMay t) (pred p))
+            let pe = fromMaybe pmax pmy
 
-            let tagPos0 = pmy <|> pmax
-            tell [Tag tagPos0 t]
-            go rest
-
-    updateSymbols = let (_,w) = evalRWS (go x) () 0 in w
-      where
-        go :: [Chunk] -> RWS () [Chunk] Pos ()
-        go chunks = case chunks of
-          [] -> pure ()
-          ( Symbol _ c  : rest ) -> do
-            pos <- get
-            modify succ
-            tell [Symbol (Just pos) c]
-            go rest
-
-          ( t : rest ) -> do
-            tell [t]
+            tell [PosLR (p,pe) tag]
             go rest
 
 
-getPos :: Chunk -> Maybe Pos
-getPos = \case
-  Symbol p _ -> p
-  Tag p _    -> p
+putChunk :: Opts -> Chunk -> IO ()
+putChunk o (Symbol c) = putChar c -- >> threadDelay (view optDelay o)
+putChunk _ (Tag x) = do
+  putStr "%{" >> putStr x >> putStr "}"
 
 
-putChunks :: [Chunk] -> Char -> IO ()
-putChunks xs end = mapM_ putChunk xs >> putChar end
-  where
-    putChunk (Symbol _ c) = putChar c >> threadDelay delay
-    putChunk  (Tag _ x) = do
-      putStr "%{" >> putStr x >> putStr "}"
+putEnd :: Opts -> IO ()
+putEnd o = if view optLf o then
+             putChar '\n'
+           else
+             putChar '\r'
+
+chunksMapL :: [WithPos LR] -> Map Pos (WithPos LR)
+chunksMapL chunks = Map.fromList [ (l, e) | e@(PosLR (l,_) _) <- chunks ]
+
+
+findSymbolL :: Pos -> Map Pos (WithPos LR) -> Maybe (WithPos LR)
+findSymbolL p m = snd <$> Map.lookupGE p m
+
 
 main :: IO ()
-main = do
+main = join . customExecParser (prefs showHelpOnError) $
+  info (helper <*> parser)
+  (  fullDesc
+  <> header "General program title/description"
+  <> progDesc "What does this thing do?"
+  )
+  where
+    parser :: Parser (IO ())
+    parser = do
+     win <- option auto (  long "window"
+                        <> short 'w'
+                        <> metavar "NUMBER"
+                        <> help "scroll window size"
+                        <> value 16
+                        <> showDefault
+                        )
+     delay <- ceiling . (*1000000) <$> option auto (  long "delay"
+                                                   <> short 'd'
+                                                   <> metavar "FLOAT"
+                                                   <> help "animation delay"
+                                                   <> value 0.1
+                                                   <> showDefault
+                                                   )
+     lf <- flag False True (  long "newline"
+                           <> short 'n'
+                           <> help "print newline"
+                           <> showDefault
+                           )
+
+     mtext <- option auto (  long "max-text"
+                          <> short 'm'
+                          <> metavar "NUMBER"
+                          <> help "max data size"
+                          <> value 4096
+                          <> showDefault
+                         )
+
+     pure $ run ( Opts win delay lf mtext )
+
+
+genIndexes :: Int -> Pos -> (Pos,Pos) -> [[Pos]]
+genIndexes n size (a,b) = take n $ go positions
+  where
+    positions = cycle [a..b]
+
+    go [] = []
+    go es = x : go (drop 1 es)
+      where
+        (x,xs) = L.splitAt (fromIntegral size) es
+
+
+run :: Opts -> IO ()
+run o = do
   hSetBuffering stdout NoBuffering
   txt <- Text.take textMax <$> TIO.hGetContents stdin
-  let chunks = updatePositions $ readChunks (Text.unpack txt)
+  let chunks = readChunks (Text.unpack txt)
+  let chunksL = chunksMapL chunks
 
-  let chuchu = [ (fromJust (getPos x), [x]) | x <- chunks, isJust (getPos x) ]
+  when (null chunks) exitSuccess
 
-  let chuMap = Map.fromListWith (<>) chuchu
+  let total = Map.size chunksL
+  let cmin = fst $ Map.findMin chunksL
+  let cmax = fst $ Map.findMax chunksL
+  let batches = genIndexes total winLen (cmin,cmax)
 
-  when (Map.null chuMap) exitSuccess
+  forM_ batches $ \batch -> do
+    let sy = catMaybes $ map (`findSymbolL` chunksL) batch
+    mapM_ (putChunk o) [ x | PosLR _ x <- sy ]
+    putEnd o
+    threadDelay delay
 
-  forM_ [0 .. fst (Map.findMax chuMap)] $ \i -> do
-    print (i, i+window)
-    -- mapM_ (putVisible (i,i+window)) chuchu
-    -- let visible = [head c | (p,c) <- chuchu, p >= i, p <= i+window]
-    -- putChunks visible '\n'
+  where
+    delay = view optDelay o
+    winLen = view optWinLen o
+    textMax = view optTextMax o
+
 
